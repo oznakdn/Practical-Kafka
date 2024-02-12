@@ -10,7 +10,7 @@ public class MessageProducerService
     {
         var config = new ProducerConfig
         {
-            BootstrapServers = "localhost:9092",
+            BootstrapServers = "localhost:29092",
             ClientId = "OrderClient",
             Acks = Acks.All
         };

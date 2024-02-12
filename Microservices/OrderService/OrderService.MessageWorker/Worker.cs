@@ -29,7 +29,8 @@ namespace OrderService.MessageWorker
             };
 
             using var consumer = new ConsumerBuilder<string, string>(config).Build();
-            consumer.Subscribe("createdOrder");
+            consumer.Subscribe(MessageTopic.CREATE_ORDER);
+            _logger.LogInformation("Connected kafka");
 
             while (!stoppingToken.IsCancellationRequested)
             {
