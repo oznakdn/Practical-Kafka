@@ -45,6 +45,119 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
 ```
 
+# Producer (Publisher)
+
+### Message Service
+
+```csharp
+public class MessageProducerService
+{
+    public async Task SendMessageAsync(string topic, CustomerDto customer)
+    {
+        var config = new ProducerConfig
+        {
+            BootstrapServers = "localhost:29092",
+            ClientId = "OrderClient",
+            Acks = Acks.All
+        };
+
+        var message = new Message<string, string>
+        {
+            Key = customer.Id,
+            Value = JsonSerializer.Serialize(customer)
+        };
+
+        using var producer = new ProducerBuilder<string, string>(config).Build();
+        await producer.ProduceAsync(topic, message);
+    }
+}
+
+```
+
+### Api Controller
+```csharp
+[Route("api/[controller]")]
+[ApiController]
+public class CustomersController(CustomerDbContext context, MessageProducerService producerService) : ControllerBase
+{
+
+    [HttpGet]
+    public async Task<IActionResult>GetCustomers()
+    {
+        return Ok(await context.Customers.ToListAsync());
+    }
+
+
+    [HttpGet("{customerId}")]
+    public async Task<IActionResult>CreateCustomerOrder(string customerId)
+    {
+        var customer = await context.Customers.SingleOrDefaultAsync(_ => _.Id == customerId);
+        if (customer is null) return NotFound();
+
+        await producerService.SendMessageAsync(MessageTopic.CREATE_ORDER, new CustomerDto(customer.Id, customer.Name, customer.Surname, customer.Balance));
+        return Ok();
+    }
+}
+
+```
+
+# Consumer (Subscriber)
+
+### Worker Service
+```csharp
+public class Worker : BackgroundService
+    {
+        private readonly ILogger<Worker> _logger;
+        private readonly OrderDbContext _context;
+
+        public Worker(ILogger<Worker> logger, OrderDbContext context)
+        {
+            _logger = logger;
+            _context = context;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            var config = new ConsumerConfig
+            {
+                BootstrapServers = "localhost:29092",
+                AutoOffsetReset = AutoOffsetReset.Earliest,
+                ClientId = "OrderClient",
+                GroupId = "OrderGroup"
+            };
+
+            using var consumer = new ConsumerBuilder<string, string>(config).Build();
+            consumer.Subscribe(MessageTopic.CREATE_ORDER);
+            _logger.LogInformation("Connected kafka");
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                var data = consumer.Consume();
+
+                if (data is not null)
+                {
+                    var customer = JsonSerializer.Deserialize<CustomerDto>(data.Message.Value);
+
+                    if (customer!.Balance > 0)
+                    {
+                        _context.Orders.Add(new Order(customer.Id, DateTime.Now));
+                        await _context.SaveChangesAsync(stoppingToken);
+                        _logger.LogInformation($"{customer.Id} Customer's order has been created successfully.");
+                    }
+                    else
+                    {
+                        _logger.LogInformation($"{customer.Id} Customer's balance is less than 0!");
+
+                    }
+                }
+
+                _logger.LogInformation($"There is no message");
+            }
+        }
+    }
+
+```
+
 ## Kafka UI
 
 ![Screenshot_1](https://github.com/oznakdn/Practical-Kafka/assets/79724084/332530c5-81c0-4fc6-b5b6-0dd2e93a7230)
